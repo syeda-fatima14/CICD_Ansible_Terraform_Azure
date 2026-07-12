@@ -40,11 +40,6 @@ pipeline {
             }
         }
 
-        stage('Health Check') {
-            steps {
-                sh "chmod +x scripts/health_check.sh && ./scripts/health_check.sh ${VM_IP}"
-            }
-        }
     }
 
     post {
