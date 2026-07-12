@@ -1,113 +1,72 @@
 pipeline {
-
     agent any
 
-    tools {
-        maven 'Maven-3.6.0'
-        jdk 'jdk1.8.0'
+    environment {
+        VM_IP = '20.245.136.71'
+        JAR_NAME = 'devops-demo-0.3.0.jar'
+        APP_DIR = '/opt/devops-demo'
+        SERVICE_NAME = 'devops-demo'
     }
 
     stages {
 
-        stage('Build') {
+        stage('Checkout') {
             steps {
                 checkout scm
-                withEnv(["PATH+MAVEN=${tool 'Maven-3.6.0'}/bin"]) {
-                    sh "/Applications/cia/apache-maven-3.6.0/bin/mvn -X clean compile"
+            }
+        }
+
+        stage('Build') {
+            steps {
+                dir('app') {
+                    sh 'mvn clean package -DskipTests'
                 }
             }
         }
 
         stage('Test') {
             steps {
-                echo("Perform Unit Test")
-                withEnv(["PATH+MAVEN=${tool 'Maven-3.6.0'}/bin"]) {
-                    sh "/Applications/cia/apache-maven-3.6.0/bin/mvn -X clean test"
+                dir('app') {
+                    sh 'mvn test'
                 }
-
-                junit('**/target/surefire-reports/TEST-*.xml')
-
-
-                echo("Perform Integration Test")
-
-                echo("SonarQube Integration")
-                sh '/Applications/cia/apache-maven-3.6.0/bin/mvn clean package sonar:sonar'
-
-                echo("IBM AppScan for CVE Check")
+            }
+            post {
+                always {
+                    junit '**/target/surefire-reports/TEST-*.xml'
+                }
             }
         }
 
-
-        stage('Package') {
+        stage('Archive') {
             steps {
-                withEnv(["PATH+MAVEN=${tool 'Maven-3.6.0'}/bin"]) {
-                    sh "/Applications/cia/apache-maven-3.6.0/bin/mvn -X clean deploy"
-                }
-
+                archiveArtifacts artifacts: 'app/target/*.jar', fingerprint: true
             }
         }
-
-        stage('Provision') {
-            steps {
-                echo("Provisioning VM on Azure")
-                dir("/Users/Shared/Jenkins/Home/workspace/ansible_master/terraform") {
-                    sh '''
-                            export PATH=$PATH:/usr/local/bin
-                            touch output
-                            terraform init
-                            az login -u kalis2050@yahoo.co.in -p Dakshin893$
-                            terraform plan -out=output
-                            terraform apply -auto-approve
-                            terraform output -json public_ip_address | jq '.value' > /Users/Shared/Jenkins/Home/workspace/ansible_master/ansible/environments/test/hosts
-                     '''
-                }
-            }
-        }
-
 
         stage('Deploy') {
             steps {
-                echo("Deploying Application using Ansible Playbook")
-                withEnv(["PATH+ANSIBLE=${tool 'ansible'}/bin"]) {
-                    sh '''
-                                  export ANSIBLE=/usr/local/Cellar/ansible/2.7.5
-                                  export PATH=$PATH:$ANSIBLE/bin:/usr/local/bin
-                                  export ANSIBLE_HOST_KEY_CHECKING=False
-                                  echo "ANSIBLE = ${ANSIBLE}"
-                                  sshpass -p Password1234! ansible-playbook /Users/Shared/Jenkins/Home/workspace/ansible_master/ansible/playbooks/deploy.yml -i /Users/Shared/Jenkins/Home/workspace/ansible_master/ansible/environments/test/hosts -s -U root -u testadmin -k                
-                    '''
+                sshagent(credentials: ['azure-vm-ssh']) {
+                    sh """
+                        scp -o StrictHostKeyChecking=no app/target/${JAR_NAME} azureuser@${VM_IP}:${APP_DIR}/${JAR_NAME}
+                        ssh -o StrictHostKeyChecking=no azureuser@${VM_IP} 'sudo systemctl restart ${SERVICE_NAME}'
+                    """
                 }
             }
         }
 
-        stage('Load Test') {
+        stage('Health Check') {
             steps {
-                build job: 'JMeter - Freestyle'
-            }
-        }
-
-        stage('Delete VM?') {
-            steps {
-                script {
-                    def userInput = input(id: 'confirm', message: 'Deploy new build?', parameters: [[$class: 'BooleanParameterDefinition', defaultValue: false, description: 'Deploy', name: 'confirm']])
-                }
-            }
-        }
-
-        stage('Delete VM') {
-            steps {
-                echo("Provisioning VM on Azure")
-                dir("/Users/Shared/Jenkins/Home/workspace/ansible_master/terraform") {
-                    sh '''
-                            export PATH=$PATH:/usr/local/bin
-                            az login -u kalis2050@yahoo.co.in -p Dakshin893$
-                            terraform destroy -auto-approve
-                            '''
-                }
+                sh "chmod +x scripts/health_check.sh && ./scripts/health_check.sh ${VM_IP}"
             }
         }
     }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully.'
+        }
+        failure {
+            echo 'Pipeline failed — check stage logs above.'
+        }
+    }
 }
-
-
-
