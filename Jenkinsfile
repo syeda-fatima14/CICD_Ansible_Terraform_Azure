@@ -18,17 +18,13 @@ pipeline {
 
         stage('Build') {
             steps {
-                dir('app') {
                     sh 'mvn clean package -DskipTests'
-                }
             }
         }
 
         stage('Test') {
             steps {
-                dir('app') {
                     sh 'mvn test'
-                }
             }
             post {
                 always {
@@ -39,7 +35,7 @@ pipeline {
 
         stage('Archive') {
             steps {
-                archiveArtifacts artifacts: 'app/target/*.jar', fingerprint: true
+                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
             }
         }
 
@@ -47,7 +43,7 @@ pipeline {
             steps {
                 sshagent(credentials: ['azure-vm-ssh']) {
                     sh """
-                        scp -o StrictHostKeyChecking=no app/target/${JAR_NAME} azureuser@${VM_IP}:${APP_DIR}/${JAR_NAME}
+                        scp -o StrictHostKeyChecking=no target/${JAR_NAME} azureuser@${VM_IP}:${APP_DIR}/${JAR_NAME}
                         ssh -o StrictHostKeyChecking=no azureuser@${VM_IP} 'sudo systemctl restart ${SERVICE_NAME}'
                     """
                 }
